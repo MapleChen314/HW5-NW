@@ -128,12 +128,56 @@ class NeedlemanWunsch:
         
         # TODO: Initialize matrix private attributes for use in alignment
         # create matrices for alignment scores, gaps, and backtracing
-        pass
-
-        
+        self._align_matrix=np.zeros((len(self._seqA)+1,len(self._seqB)+1))
+        self._gapA_matrix=np.tile(-np.inf,(len(self._seqA)+1,len(self._seqB)+1))
+        self._gapB_matrix=np.tile(-np.inf,(len(self._seqA)+1,len(self._seqB)+1))
+        self._back = np.tile("None",(len(self._seqA)+1,len(self._seqB)+1))
+        #self._back[0,:]=np.tile(1,len(self._seqB)+1)
+        self._back_A = np.tile("None",(len(self._seqA)+1,len(self._seqB)+1))
+        self._back_B = np.tile("None",(len(self._seqA)+1,len(self._seqB)+1))
+        for i in range(len(self._seqA)+1):
+            self._gapA_matrix[i,0]=self.gap_open+self.gap_extend*i
+            self._back_A[i,0]="eGA"
+            self._align_matrix[i,0]=-np.inf
+        for j in range(len(self._seqB)+1):
+            self._gapB_matrix[0,j]=self.gap_open+self.gap_extend*j
+            self._back_B[0,j]="eGB"
+            self._align_matrix[0,j]=-np.inf
+        self._align_matrix[0,0]=0
+      
         # TODO: Implement global alignment here
-        pass      		
-        		    
+        for i in range(1,len(self._seqA)+1):
+            for j in range(1,len(self._seqB)+1):
+                align_reward=self.sub_dict[(self._seqA[i-1],self._seqB[j-1])] #Sequences are 0-indexed and matrices are 1-indexed because of the extra column I have
+                self._align_matrix[i,j]=max(
+                    self._gapA_matrix[i-1,j-1]+align_reward, #Match from previous A gap
+                    self._gapB_matrix[i-1,j-1]+align_reward, #Match from previous B gap
+                    self._align_matrix[i-1,j-1]+align_reward #Match ; go diagonal
+                )
+                self._gapA_matrix[i,j]=max(
+                    self._align_matrix[i-1,j]+self.gap_open+self.gap_extend, #Open gap in A; traverse vertically
+                    self._gapA_matrix[i-1,j]+self.gap_extend #Extend gap
+                )
+                self._gapB_matrix[i,j]=max(
+                    self._align_matrix[i,j-1]+self.gap_open+self.gap_extend, #open gap in B; traverse horizontally
+                    self._gapB_matrix[i,j-1]+self.gap_extend #extend gap
+                )
+                back_idx=np.argmax(np.array((
+                    self._gapA_matrix[i-1,j-1]+align_reward, 
+                    self._gapB_matrix[i-1,j-1]+align_reward,
+                    self._align_matrix[i-1,j-1]+align_reward 
+                )))
+                self._back[i,j]=["GA","GB","Mtch"][back_idx]
+                back_A_idx=np.argmax(np.array((
+                    self._align_matrix[i-1,j]+self.gap_open+self.gap_extend, #Open gap; go to _back and go vertical
+                    self._gapA_matrix[i-1,j]+self.gap_extend #Extend gap; go to backA and go vertical
+                )))
+                self._back_A[i,j]=["oGA","eGA"][back_A_idx]
+                back_B_idx=np.argmax(np.array((
+                    self._align_matrix[i-1,j]+self.gap_open+self.gap_extend, #Open gap; go to _back and go horizontal
+                    self._gapB_matrix[i-1,j]+self.gap_extend #Extend gap; go to backA and go horizontal
+                )))
+                self._back_B[i,j]=["oGB","eGB"][back_B_idx]
         return self._backtrace()
 
     def _backtrace(self) -> Tuple[float, str, str]:
@@ -150,7 +194,55 @@ class NeedlemanWunsch:
          	(alignment score, seqA alignment, seqB alignment) : Tuple[float, str, str]
          		the score and corresponding strings for the alignment of seqA and seqB
         """
-        pass
+        #Get the top scoring-- should this just be the bottom right?
+        #[top_score_idxx,top_score_idxy]=np.unravel_index(np.argmax(self._align_matrix, axis=None), self._align_matrix.shape)
+        self.alignment_score=max(
+            self._align_matrix[-1,-1],
+            self._gapA_matrix[-1,-1],
+            self._gapB_matrix[-1,-1]
+        )
+        current_idx=[len(self._seqA),len(self._seqB)]
+        current_matrix_idx=np.argmax(np.array((
+            self._align_matrix[-1,-1],
+            self._gapA_matrix[-1,-1],
+            self._gapB_matrix[-1,-1])))
+        matrices=[self._back,self._back_A,self._back_B]
+        while (current_idx[0]>0 or current_idx[1]>0):
+            pointer=matrices[current_matrix_idx][current_idx[0],current_idx[1]]
+            if current_matrix_idx==0:
+                if pointer=="GA": #Match from previous A Gap
+                    change_idx=[-1,-1]
+                    new_matrix_idx=1
+                    self.seqA_align=self._seqA[current_idx[0]-1]+self.seqA_align
+                    self.seqB_align=self._seqB[current_idx[1]-1]+self.seqB_align
+                elif pointer=="GB": #Match from previous B Gap
+                    change_idx=[-1,-1]
+                    new_matrix_idx=2
+                    self.seqA_align=self._seqA[current_idx[0]-1]+self.seqA_align
+                    self.seqB_align=self._seqB[current_idx[1]-1]+self.seqB_align
+                elif pointer=="Mtch": #Match from previous match
+                    change_idx=[-1,-1]
+                    new_matrix_idx=0
+                    self.seqA_align=self._seqA[current_idx[0]-1]+self.seqA_align
+                    self.seqB_align=self._seqB[current_idx[1]-1]+self.seqB_align
+            elif current_matrix_idx==1: #Reference gapA
+                change_idx=[-1,0]
+                self.seqA_align=self._seqA[current_idx[0]-1]+self.seqA_align
+                self.seqB_align="-"+self.seqB_align
+                if pointer=="eGA":
+                    new_matrix_idx=1
+                else:
+                    new_matrix_idx=0
+            elif current_matrix_idx==2: #Reference GapB
+                change_idx=[0,-1]
+                self.seqA_align="-"+self.seqA_align
+                self.seqB_align=self._seqB[current_idx[1]]+self.seqB_align
+                if pointer=="eGA":
+                    new_matrix_idx=2
+                else:
+                    new_matrix_idx=0
+            current_idx=[x+y for x,y in zip(current_idx,change_idx)]
+            current_matrix_idx=new_matrix_idx
 
         return (self.alignment_score, self.seqA_align, self.seqB_align)
 
